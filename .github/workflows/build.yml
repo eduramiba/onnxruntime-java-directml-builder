@@ -1,0 +1,200 @@
+name: Build ONNX Runtime Java DirectML
+
+on:
+  workflow_dispatch:
+    inputs:
+      ort_ref:
+        description: "ONNX Runtime git ref/tag to build"
+        required: true
+        default: "v1.26.0"
+      build_config:
+        description: "Build configuration"
+        required: true
+        default: "Release"
+        type: choice
+        options:
+          - Release
+          - Debug
+          - RelWithDebInfo
+
+jobs:
+  build-windows-java-directml:
+    name: Build Windows x64 Java + DirectML
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    env:
+      ORT_REF: ${{ inputs.ort_ref }}
+      BUILD_CONFIG: ${{ inputs.build_config }}
+      ORT_DIR: C:\ort
+      ARTIFACT_DIR: C:\ort-artifacts
+
+    steps:
+      - name: Show runner environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "OS:"
+          Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsHardwareAbstractionLayer
+
+          Write-Host "`nVisual Studio:"
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+
+          Write-Host "`nPython:"
+          python --version
+
+          Write-Host "`nCMake:"
+          cmake --version
+
+          Write-Host "`nJava:"
+          $env:JAVA_HOME = $env:JAVA_HOME_17_X64
+          $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
+          java -version
+          javac -version
+
+          Write-Host "`nGit:"
+          git --version
+
+      - name: Checkout ONNX Runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if (Test-Path $env:ORT_DIR) {
+            Remove-Item -Recurse -Force $env:ORT_DIR
+          }
+
+          git clone `
+            --recursive `
+            --branch $env:ORT_REF `
+            --depth 1 `
+            https://github.com/microsoft/onnxruntime.git `
+            $env:ORT_DIR
+
+          Set-Location $env:ORT_DIR
+          git submodule update --init --recursive --depth 1
+
+          Write-Host "Checked out:"
+          git rev-parse HEAD
+
+      - name: Install Python build dependencies
+        shell: pwsh
+        working-directory: C:\ort
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          python -m pip install --upgrade pip setuptools wheel
+
+          if (Test-Path "requirements-dev.txt") {
+            python -m pip install -r requirements-dev.txt
+          }
+
+      - name: Build ONNX Runtime Java with DirectML
+        shell: cmd
+        working-directory: C:\ort
+        run: |
+          set JAVA_HOME=%JAVA_HOME_17_X64%
+          set PATH=%JAVA_HOME%\bin;%PATH%
+
+          call build.bat ^
+            --config %BUILD_CONFIG% ^
+            --build_java ^
+            --use_dml ^
+            --parallel ^
+            --skip_tests ^
+            --compile_no_warning_as_error
+
+      - name: Collect build outputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          New-Item -ItemType Directory -Force -Path $env:ARTIFACT_DIR | Out-Null
+
+          $javaLibDir = Join-Path $env:ORT_DIR "build\Windows\$env:BUILD_CONFIG\java\build\libs"
+          if (-not (Test-Path $javaLibDir)) {
+            throw "Java libs directory not found: $javaLibDir"
+          }
+
+          Write-Host "Java libs:"
+          Get-ChildItem $javaLibDir -Recurse | Format-Table FullName, Length
+
+          Copy-Item "$javaLibDir\*.jar" $env:ARTIFACT_DIR -Force
+
+          $nativeCandidates = @(
+            "build\Windows\$env:BUILD_CONFIG\$env:BUILD_CONFIG",
+            "build\Windows\$env:BUILD_CONFIG",
+            "build\Windows\$env:BUILD_CONFIG\java\build\libs"
+          )
+
+          foreach ($rel in $nativeCandidates) {
+            $dir = Join-Path $env:ORT_DIR $rel
+            if (Test-Path $dir) {
+              Get-ChildItem $dir -Recurse -Include `
+                "onnxruntime.dll", `
+                "onnxruntime4j_jni.dll", `
+                "DirectML.dll", `
+                "onnxruntime_providers*.dll" `
+                -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                  Copy-Item $_.FullName $env:ARTIFACT_DIR -Force
+                }
+            }
+          }
+
+          Write-Host "Collected artifacts:"
+          Get-ChildItem $env:ARTIFACT_DIR | Format-Table Name, Length
+
+      - name: Verify jar contains expected native libraries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $jar = Get-ChildItem $env:ARTIFACT_DIR -Filter "*.jar" | Select-Object -First 1
+          if (-not $jar) {
+            throw "No jar found in artifact directory."
+          }
+
+          Write-Host "Inspecting jar: $($jar.FullName)"
+          $entries = & jar tf $jar.FullName
+
+          $entries | Select-String -Pattern "dll|jni|DirectML|onnxruntime" | ForEach-Object {
+            Write-Host $_
+          }
+
+          if (-not ($entries | Select-String -Quiet "onnxruntime4j_jni.dll")) {
+            throw "onnxruntime4j_jni.dll was not found inside the jar."
+          }
+
+          if (-not ($entries | Select-String -Quiet "onnxruntime.dll")) {
+            throw "onnxruntime.dll was not found inside the jar."
+          }
+
+          Write-Host "OK: jar includes onnxruntime.dll and onnxruntime4j_jni.dll"
+
+      - name: Create checksum file
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Set-Location $env:ARTIFACT_DIR
+
+          Get-ChildItem -File | ForEach-Object {
+            $hash = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($hash.Hash)  $($_.Name)"
+          } | Set-Content SHA256SUMS.txt
+
+          Get-Content SHA256SUMS.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: onnxruntime-java-directml-${{ inputs.ort_ref }}-${{ inputs.build_config }}-windows-x64
+          path: C:\ort-artifacts\*
+          if-no-files-found: error
+          retention-days: 14

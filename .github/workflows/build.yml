@@ -17,6 +17,12 @@ on:
           - Debug
           - RelWithDebInfo
 
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build.yml"
+
 jobs:
   build-windows-java-directml:
     name: Build Windows x64 Java + DirectML

@@ -30,8 +30,8 @@ jobs:
     timeout-minutes: 360
 
     env:
-      ORT_REF: ${{ inputs.ort_ref }}
-      BUILD_CONFIG: ${{ inputs.build_config }}
+      ORT_REF: ${{ inputs.ort_ref || 'v1.26.0' }}
+      BUILD_CONFIG: ${{ inputs.build_config || 'Release' }}
       ORT_DIR: C:\ort
       ARTIFACT_DIR: C:\ort-artifacts
 

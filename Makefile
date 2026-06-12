@@ -17,7 +17,7 @@ deploy: bundle-dml check
 	mvn deploy -Pdeployment
 
 bundle-dml:
-	pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -File bundle-dml.ps1 -JarPath "$(JAR)" -DmlDllPath "$(DML_DLL)"
+	pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -File bundle-dml.ps1 -JarPath "$(JAR)" -DmlDllPath "$(DML_DLL)" -NativeDllDirectory "$(DIST_DIR)"
 
 check:
 	$(PWRSH) "if (-not (Test-Path '$(DIST_DIR)' -PathType Container)) { throw 'Directory not found: $(DIST_DIR)' }"
@@ -26,6 +26,7 @@ check:
 	$(PWRSH) "if (-not (Test-Path '$(DIST_DIR)/onnxruntime-javadoc.jar' -PathType Leaf)) { throw 'Javadoc jar not found' }"
 	$(PWRSH) "jar tf '$(JAR)' | Out-Null"
 	$(PWRSH) "if (-not (jar tf '$(JAR)' | Select-String 'DirectML.dll')) { throw 'DirectML.dll not bundled in jar! Run: make bundle-dml' }"
+	$(PWRSH) "if ((Test-Path '$(DIST_DIR)/onnxruntime_providers_openvino.dll') -and -not (jar tf '$(JAR)' | Select-String 'onnxruntime_providers_openvino.dll')) { throw 'onnxruntime_providers_openvino.dll not bundled in jar! Run: make bundle-dml' }"
 	$(PWRSH) "Write-Host 'Coordinates: $(GROUP_ID):$(ARTIFACT_ID):$(VERSION)'"
 	$(PWRSH) "Write-Host 'Dist dir: $(DIST_DIR)'"
 

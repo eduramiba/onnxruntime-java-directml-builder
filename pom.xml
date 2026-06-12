@@ -8,8 +8,8 @@
     <modelVersion>4.0.0</modelVersion>
     <packaging>pom</packaging>
 
-    <name>ONNX Runtime DirectML + XNNPACK Java</name>
-    <description>ONNX Runtime Java artifact built with DirectML and XNNPACK support for Windows x64. Bundles the official ONNX Runtime Java API classes alongside native DLLs compiled with --use_dml and --use_xnnpack.</description>
+    <name>ONNX Runtime DirectML + OpenVINO Java</name>
+    <description>ONNX Runtime Java artifact built with DirectML and OpenVINO support for Windows x64. Bundles the official ONNX Runtime Java API classes alongside native DLLs compiled with --use_dml and --use_openvino.</description>
     <url>https://github.com/eduramiba/onnxruntime-java-directml-builder</url>
 
     <licenses>

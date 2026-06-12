@@ -19,8 +19,8 @@ New-Item -ItemType Directory -Force -Path $pomDir | Out-Null
   <version>VERSION_PLACEHOLDER</version>
   <packaging>jar</packaging>
 
-  <name>ONNX Runtime DirectML Java</name>
-  <description>Custom ONNX Runtime Java artifact built with DirectML support for Windows x64.</description>
+  <name>ONNX Runtime DirectML + OpenVINO Java</name>
+  <description>Custom ONNX Runtime Java artifact built with DirectML and OpenVINO support for Windows x64.</description>
   <url>https://github.com/eduramiba/onnxruntime-java-directml-builder</url>
 
   <licenses>

@@ -1,4 +1,4 @@
-name: Build ONNX Runtime Java DirectML + XNNPACK
+name: Build ONNX Runtime Java DirectML + OpenVINO
 
 on:
   workflow_dispatch:
@@ -16,6 +16,15 @@ on:
           - Release
           - Debug
           - RelWithDebInfo
+      openvino_device:
+        description: "Default OpenVINO target device"
+        required: true
+        default: "CPU"
+        type: choice
+        options:
+          - CPU
+          - GPU
+          - NPU
 
   push:
     branches:
@@ -25,17 +34,22 @@ on:
 
 jobs:
   build-windows-java-directml:
-    name: Build Windows x64 Java + DirectML + XNNPACK
+    name: Build Windows x64 Java + DirectML + OpenVINO
     runs-on: windows-2022
     timeout-minutes: 360
 
     env:
       ORT_REF: ${{ inputs.ort_ref || 'v1.26.0' }}
       BUILD_CONFIG: ${{ inputs.build_config || 'Release' }}
+      OPENVINO_DEVICE: ${{ inputs.openvino_device || 'CPU' }}
+      OPENVINO_PACKAGE_VERSION: "2025.3.0"
       ORT_DIR: C:\ort
       ARTIFACT_DIR: C:\ort-artifacts
 
     steps:
+      - name: Checkout packaging repository
+        uses: actions/checkout@v4
+
       - name: Show runner environment
         shell: pwsh
         run: |
@@ -100,7 +114,46 @@ jobs:
             python -m pip install -r requirements-dev.txt
           }
 
-      - name: Build ONNX Runtime Java with DirectML + XNNPACK
+      - name: Install OpenVINO build dependencies
+        shell: pwsh
+        working-directory: C:\ort
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          python -m pip install "openvino==$env:OPENVINO_PACKAGE_VERSION"
+
+          $probeScript = @'
+          import json
+          import pathlib
+          import openvino
+
+          package_dir = pathlib.Path(openvino.__file__).resolve().parent
+          cmake_files = sorted(package_dir.rglob("OpenVINOConfig.cmake"))
+          if not cmake_files:
+              raise RuntimeError(f"OpenVINOConfig.cmake not found under {package_dir}")
+
+          dll_dirs = sorted({str(path.parent) for path in package_dir.rglob("*.dll")})
+          print(json.dumps({
+              "package_dir": str(package_dir),
+              "cmake_dir": str(cmake_files[0].parent),
+              "dll_dirs": dll_dirs,
+          }))
+          '@
+
+          $openvinoInfo = python -c $probeScript | ConvertFrom-Json
+
+          "OpenVINO_DIR=$($openvinoInfo.cmake_dir)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CMAKE_PREFIX_PATH=$($openvinoInfo.package_dir)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "OPENVINO_PACKAGE_DIR=$($openvinoInfo.package_dir)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "OPENVINO_DLL_DIRS=$($openvinoInfo.dll_dirs -join ';')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $openvinoInfo.dll_dirs | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          Write-Host "OpenVINO package directory: $($openvinoInfo.package_dir)"
+          Write-Host "OpenVINO CMake directory: $($openvinoInfo.cmake_dir)"
+          Write-Host "OpenVINO DLL directories:"
+          $openvinoInfo.dll_dirs | ForEach-Object { Write-Host "  $_" }
+
+      - name: Build ONNX Runtime Java with DirectML + OpenVINO
         shell: cmd
         working-directory: C:\ort
         run: |
@@ -110,8 +163,9 @@ jobs:
           call build.bat ^
             --config %BUILD_CONFIG% ^
             --build_java ^
+            --build_shared_lib ^
             --use_dml ^
-            --use_xnnpack ^
+            --use_openvino %OPENVINO_DEVICE% ^
             --parallel ^
             --skip_tests ^
             --compile_no_warning_as_error
@@ -154,8 +208,42 @@ jobs:
             }
           }
 
+          if (-not [string]::IsNullOrWhiteSpace($env:OPENVINO_DLL_DIRS)) {
+            foreach ($dir in ($env:OPENVINO_DLL_DIRS -split ';')) {
+              if (Test-Path $dir) {
+                Get-ChildItem $dir -Filter "*.dll" -File | ForEach-Object {
+                  Copy-Item $_.FullName $env:ARTIFACT_DIR -Force
+                }
+              }
+            }
+          }
+
           Write-Host "Collected artifacts:"
           Get-ChildItem $env:ARTIFACT_DIR | Format-Table Name, Length
+
+      - name: Bundle native DLLs into Java jar
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $jar = Join-Path $env:ARTIFACT_DIR "onnxruntime.jar"
+          $directMl = Join-Path $env:ARTIFACT_DIR "DirectML.dll"
+          $bundleScript = Join-Path $env:GITHUB_WORKSPACE "bundle-dml.ps1"
+
+          if (-not (Test-Path $jar)) {
+            throw "onnxruntime.jar not found in artifact directory."
+          }
+          if (-not (Test-Path $directMl)) {
+            throw "DirectML.dll not found in artifact directory."
+          }
+          if (-not (Test-Path $bundleScript)) {
+            throw "Bundle script not found: $bundleScript"
+          }
+
+          & pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -File $bundleScript -JarPath $jar -DmlDllPath $directMl -NativeDllDirectory $env:ARTIFACT_DIR
+
+          Write-Host "Bundled jar native DLLs:"
+          jar tf $jar | Select-String -Pattern "ai/onnxruntime/native/win-x64/.*\.dll"
 
       - name: Verify generated Java + native artifacts
         shell: pwsh
@@ -172,7 +260,8 @@ jobs:
             "onnxruntime.dll",
             "onnxruntime4j_jni.dll",
             "DirectML.dll",
-            "onnxruntime_providers_shared.dll"
+            "onnxruntime_providers_shared.dll",
+            "onnxruntime_providers_openvino.dll"
           )
 
           foreach ($file in $requiredFiles) {
@@ -182,11 +271,48 @@ jobs:
             }
           }
 
+          if (-not (Get-ChildItem $env:ARTIFACT_DIR -Filter "openvino*.dll" -File)) {
+            throw "No OpenVINO runtime DLLs were collected."
+          }
+
           Write-Host "Inspecting main jar:"
           jar tf $jar | Select-String -Pattern "ai/onnxruntime|META-INF" | Select-Object -First 20
 
+          foreach ($jarEntry in @("DirectML.dll", "onnxruntime_providers_openvino.dll")) {
+            if (-not (jar tf $jar | Select-String -SimpleMatch $jarEntry)) {
+              throw "$jarEntry not bundled in onnxruntime.jar"
+            }
+          }
+
           Write-Host "OK: found Java jar and required native DLLs:"
           Get-ChildItem $env:ARTIFACT_DIR | Format-Table Name, Length
+
+      - name: Smoke test Java providers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $jar = Join-Path $env:ARTIFACT_DIR "onnxruntime.jar"
+          $smokeScript = @'
+          import ai.onnxruntime.*;
+
+          var env = OrtEnvironment.getEnvironment();
+          System.out.println(env.getVersion());
+          var providers = OrtEnvironment.getAvailableProviders();
+          System.out.println(providers);
+          if (!providers.contains(OrtProvider.OPEN_VINO)) {
+            throw new RuntimeException("OpenVINO provider is not available");
+          }
+          try (var opts = new OrtSession.SessionOptions()) {
+            opts.addOpenVINO("CPU");
+          }
+          System.out.println("Java provider smoke test OK");
+          '@
+
+          $smokeScript | jshell --class-path $jar
+          if ($LASTEXITCODE -ne 0) {
+            throw "Java provider smoke test failed."
+          }
 
       - name: Create checksum file
         shell: pwsh
@@ -205,7 +331,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: onnxruntime-java-directml-xnnpack-${{ env.ORT_REF }}-${{ env.BUILD_CONFIG }}-windows-x64
+          name: onnxruntime-java-directml-openvino-${{ env.ORT_REF }}-${{ env.BUILD_CONFIG }}-windows-x64
           path: C:\ort-artifacts\*
           if-no-files-found: error
           retention-days: 14

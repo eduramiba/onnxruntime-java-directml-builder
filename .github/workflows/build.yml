@@ -1,4 +1,4 @@
-name: Build ONNX Runtime Java DirectML
+name: Build ONNX Runtime Java DirectML + XNNPACK
 
 on:
   workflow_dispatch:
@@ -25,7 +25,7 @@ on:
 
 jobs:
   build-windows-java-directml:
-    name: Build Windows x64 Java + DirectML
+    name: Build Windows x64 Java + DirectML + XNNPACK
     runs-on: windows-2022
     timeout-minutes: 360
 
@@ -100,7 +100,7 @@ jobs:
             python -m pip install -r requirements-dev.txt
           }
 
-      - name: Build ONNX Runtime Java with DirectML
+      - name: Build ONNX Runtime Java with DirectML + XNNPACK
         shell: cmd
         working-directory: C:\ort
         run: |
@@ -111,6 +111,7 @@ jobs:
             --config %BUILD_CONFIG% ^
             --build_java ^
             --use_dml ^
+            --use_xnnpack ^
             --parallel ^
             --skip_tests ^
             --compile_no_warning_as_error
@@ -204,7 +205,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: onnxruntime-java-directml-${{ env.ORT_REF }}-${{ env.BUILD_CONFIG }}-windows-x64
+          name: onnxruntime-java-directml-xnnpack-${{ env.ORT_REF }}-${{ env.BUILD_CONFIG }}-windows-x64
           path: C:\ort-artifacts\*
           if-no-files-found: error
           retention-days: 14

@@ -1,1 +1,2 @@
-*/**/generated-pom.xml
+target/
+generated-pom.xml

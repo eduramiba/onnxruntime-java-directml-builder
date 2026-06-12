@@ -156,32 +156,36 @@ jobs:
           Write-Host "Collected artifacts:"
           Get-ChildItem $env:ARTIFACT_DIR | Format-Table Name, Length
 
-      - name: Verify jar contains expected native libraries
+      - name: Verify generated Java + native artifacts
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          $jar = Get-ChildItem $env:ARTIFACT_DIR -Filter "*.jar" | Select-Object -First 1
-          if (-not $jar) {
-            throw "No jar found in artifact directory."
+          $jar = Join-Path $env:ARTIFACT_DIR "onnxruntime.jar"
+          if (-not (Test-Path $jar)) {
+            throw "onnxruntime.jar not found in artifact directory."
           }
 
-          Write-Host "Inspecting jar: $($jar.FullName)"
-          $entries = & jar tf $jar.FullName
+          $requiredFiles = @(
+            "onnxruntime.jar",
+            "onnxruntime.dll",
+            "onnxruntime4j_jni.dll",
+            "DirectML.dll",
+            "onnxruntime_providers_shared.dll"
+          )
 
-          $entries | Select-String -Pattern "dll|jni|DirectML|onnxruntime" | ForEach-Object {
-            Write-Host $_
+          foreach ($file in $requiredFiles) {
+            $path = Join-Path $env:ARTIFACT_DIR $file
+            if (-not (Test-Path $path)) {
+              throw "Required artifact missing: $file"
+            }
           }
 
-          if (-not ($entries | Select-String -Quiet "onnxruntime4j_jni.dll")) {
-            throw "onnxruntime4j_jni.dll was not found inside the jar."
-          }
+          Write-Host "Inspecting main jar:"
+          jar tf $jar | Select-String -Pattern "ai/onnxruntime|META-INF" | Select-Object -First 20
 
-          if (-not ($entries | Select-String -Quiet "onnxruntime.dll")) {
-            throw "onnxruntime.dll was not found inside the jar."
-          }
-
-          Write-Host "OK: jar includes onnxruntime.dll and onnxruntime4j_jni.dll"
+          Write-Host "OK: found Java jar and required native DLLs:"
+          Get-ChildItem $env:ARTIFACT_DIR | Format-Table Name, Length
 
       - name: Create checksum file
         shell: pwsh
@@ -200,7 +204,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: onnxruntime-java-directml-${{ inputs.ort_ref }}-${{ inputs.build_config }}-windows-x64
+          name: onnxruntime-java-directml-${{ env.ORT_REF }}-${{ env.BUILD_CONFIG }}-windows-x64
           path: C:\ort-artifacts\*
           if-no-files-found: error
           retention-days: 14

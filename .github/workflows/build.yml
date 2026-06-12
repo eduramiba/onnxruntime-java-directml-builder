@@ -221,30 +221,6 @@ jobs:
           Write-Host "Collected artifacts:"
           Get-ChildItem $env:ARTIFACT_DIR | Format-Table Name, Length
 
-      - name: Bundle native DLLs into Java jar
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $jar = Join-Path $env:ARTIFACT_DIR "onnxruntime.jar"
-          $directMl = Join-Path $env:ARTIFACT_DIR "DirectML.dll"
-          $bundleScript = Join-Path $env:GITHUB_WORKSPACE "bundle-dml.ps1"
-
-          if (-not (Test-Path $jar)) {
-            throw "onnxruntime.jar not found in artifact directory."
-          }
-          if (-not (Test-Path $directMl)) {
-            throw "DirectML.dll not found in artifact directory."
-          }
-          if (-not (Test-Path $bundleScript)) {
-            throw "Bundle script not found: $bundleScript"
-          }
-
-          & pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -File $bundleScript -JarPath $jar -DmlDllPath $directMl -NativeDllDirectory $env:ARTIFACT_DIR
-
-          Write-Host "Bundled jar native DLLs:"
-          jar tf $jar | Select-String -Pattern "ai/onnxruntime/native/win-x64/.*\.dll"
-
       - name: Verify generated Java + native artifacts
         shell: pwsh
         run: |
@@ -261,7 +237,10 @@ jobs:
             "onnxruntime4j_jni.dll",
             "DirectML.dll",
             "onnxruntime_providers_shared.dll",
-            "onnxruntime_providers_openvino.dll"
+            "onnxruntime_providers_openvino.dll",
+            "openvino.dll",
+            "openvino_intel_cpu_plugin.dll",
+            "tbb12.dll"
           )
 
           foreach ($file in $requiredFiles) {
@@ -278,9 +257,11 @@ jobs:
           Write-Host "Inspecting main jar:"
           jar tf $jar | Select-String -Pattern "ai/onnxruntime|META-INF" | Select-Object -First 20
 
-          foreach ($jarEntry in @("DirectML.dll", "onnxruntime_providers_openvino.dll")) {
+          foreach ($jarEntry in @("DirectML.dll", "openvino.dll", "openvino_intel_cpu_plugin.dll", "tbb12.dll")) {
             if (-not (jar tf $jar | Select-String -SimpleMatch $jarEntry)) {
-              throw "$jarEntry not bundled in onnxruntime.jar"
+              Write-Host "OK: $jarEntry is not bundled in onnxruntime.jar"
+            } else {
+              throw "$jarEntry should be a sidecar DLL, not bundled in onnxruntime.jar"
             }
           }
 

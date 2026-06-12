@@ -33,4 +33,4 @@ DirectML and OpenVINO support are enabled through the ONNX Runtime build flags:
 build.bat --config Release --build_java --use_dml --use_openvino CPU --parallel --skip_tests
 ```
 
-OpenVINO is a shared execution provider. The jar bundles `onnxruntime_providers_openvino.dll`, but the OpenVINO runtime DLLs must also be available at runtime. Use Intel's `setupvars.bat`, put the OpenVINO DLL directory on `PATH`, or run with `-Donnxruntime.native.path=<directory-with-all-native-dlls>`.
+OpenVINO is a shared execution provider. OpenVINO, DirectML, and TBB DLLs are kept as sidecar files in `dist/<version>` and in the uploaded workflow artifact; they are not bundled into `onnxruntime.jar` because ONNX Runtime Java only extracts its own known native libraries from the jar.

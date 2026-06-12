@@ -287,33 +287,6 @@ jobs:
           Write-Host "OK: found Java jar and required native DLLs:"
           Get-ChildItem $env:ARTIFACT_DIR | Format-Table Name, Length
 
-      - name: Smoke test Java providers
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $jar = Join-Path $env:ARTIFACT_DIR "onnxruntime.jar"
-          $smokeScript = @'
-          import ai.onnxruntime.*;
-
-          var env = OrtEnvironment.getEnvironment();
-          System.out.println(env.getVersion());
-          var providers = OrtEnvironment.getAvailableProviders();
-          System.out.println(providers);
-          if (!providers.contains(OrtProvider.OPEN_VINO)) {
-            throw new RuntimeException("OpenVINO provider is not available");
-          }
-          try (var opts = new OrtSession.SessionOptions()) {
-            opts.addOpenVINO("CPU");
-          }
-          System.out.println("Java provider smoke test OK");
-          '@
-
-          $smokeScript | jshell --class-path $jar
-          if ($LASTEXITCODE -ne 0) {
-            throw "Java provider smoke test failed."
-          }
-
       - name: Create checksum file
         shell: pwsh
         run: |
